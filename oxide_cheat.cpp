@@ -1,25 +1,15 @@
-// ================================================================
-//  OXIDE: SURVIVAL ISLAND - ESP + AIMBOT + WALLHACK + IMGUI MENU
-//  Версия offsets: 1.13.11940 (ARM64)
-//  Сборка: Android NDK (arm64-v8a)
-// ================================================================
-
 #include <jni.h>
 #include <android/log.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstring>
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
 #include <atomic>
 #include <vector>
-#include <string>
-
-// ImGui (упрощённое подключение; в реальном проекте нужен полный фреймворк)
-#include "imgui.h"
-#include "imgui_impl_android.h"
 
 #define LOG_TAG "OxideCheat"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -28,11 +18,8 @@ typedef uint64_t u64;
 typedef uint32_t u32;
 typedef float f32;
 
-// ===== СМЕЩЕНИЯ (ВЕРСИЯ 1.13.11940) =====
 struct Offsets {
-    u64 gworld = 0x693f904;          // Player shit (базовый указатель)
-    u64 player_update = 0x6938128;   // player update
-    u64 player_destroy = 0xbfd8d94;  // player destroy
+    u64 gworld = 0x693f904;
     u64 ulevel = 0x30;
     u64 actors = 0x20;
     u64 actor_count = 0x28;
@@ -46,35 +33,32 @@ struct Offsets {
     u64 last_render_time = 0x360;
     u64 camera_manager = 0x458;
     u64 camera_cache = 0x1B80;
-    u64 mesh = 0x3D0;
 };
 Offsets off;
 
-// ===== НАСТРОЙКИ =====
 std::atomic<bool> g_esp{true};
 std::atomic<bool> g_wallhack{true};
 std::atomic<bool> g_aimbot{true};
 std::atomic<float> g_smooth{0.15f};
-std::atomic<float> g_fov{30.0f};
 
-// ===== ПАМЯТЬ =====
 int mem_fd = -1;
 bool init_mem() {
     mem_fd = open("/proc/self/mem", O_RDWR);
     return mem_fd >= 0;
 }
+
 template<typename T> T read_mem(u64 addr) {
     T v = T(0);
     if (mem_fd < 0 || !addr) return v;
     pread(mem_fd, &v, sizeof(T), (off_t)addr);
     return v;
 }
+
 template<typename T> void write_mem(u64 addr, T v) {
     if (mem_fd < 0 || !addr) return;
     pwrite(mem_fd, &v, sizeof(T), (off_t)addr);
 }
 
-// ===== БАЗА libUE4.so =====
 u64 get_base(const char* name = "libUE4.so") {
     FILE* f = fopen("/proc/self/maps", "r");
     if (!f) return 0;
@@ -85,7 +69,6 @@ u64 get_base(const char* name = "libUE4.so") {
     return b;
 }
 
-// ===== ЛОКАЛЬНЫЙ ИГРОК =====
 u64 get_local_pawn(u64 gworld) {
     if (!gworld) return 0;
     u64 gi = read_mem<u64>(gworld + 0x38);
@@ -97,7 +80,6 @@ u64 get_local_pawn(u64 gworld) {
     return read_mem<u64>(pc + off.pawn);
 }
 
-// ===== СПИСОК АКТОРОВ =====
 std::vector<u64> get_actors(u64 gworld) {
     std::vector<u64> v;
     if (!gworld) return v;
@@ -113,7 +95,6 @@ std::vector<u64> get_actors(u64 gworld) {
     return v;
 }
 
-// ===== AIMBOT =====
 void do_aimbot(u64 gworld, u64 local_pawn) {
     if (!g_aimbot.load() || !local_pawn) return;
     auto actors = get_actors(gworld);
@@ -164,7 +145,6 @@ void do_aimbot(u64 gworld, u64 local_pawn) {
     }
 }
 
-// ===== ESP + WALLHACK =====
 void do_esp(u64 gworld, u64 local_pawn) {
     if (!g_esp.load() && !g_wallhack.load()) return;
     auto actors = get_actors(gworld);
@@ -188,11 +168,9 @@ void do_esp(u64 gworld, u64 local_pawn) {
     }
 }
 
-// ===== ПОТОК ЧИТА =====
 void* cheat_thread(void*) {
     u64 base = get_base();
-    if (!base) { LOGE("libUE4.so not found"); return nullptr; }
-    LOGI("libUE4.so base: 0x%llX", (unsigned long long)base);
+    if (!base) return nullptr;
     while (true) {
         u64 gworld = read_mem<u64>(base + off.gworld);
         if (gworld) {
@@ -207,23 +185,10 @@ void* cheat_thread(void*) {
     return nullptr;
 }
 
-// ===== IMGUI MENU (УПРОЩЁННО) =====
-void render_menu() {
-    ImGui::Begin("Oxide Cheat", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::Checkbox("ESP", (bool*)&g_esp);
-    ImGui::Checkbox("Wallhack", (bool*)&g_wallhack);
-    ImGui::Checkbox("Aimbot", (bool*)&g_aimbot);
-    ImGui::SliderFloat("Smooth", (float*)&g_smooth, 0.01f, 1.0f);
-    ImGui::SliderFloat("FOV", (float*)&g_fov, 5.0f, 180.0f);
-    ImGui::End();
-}
-
-// ===== СТАРТ =====
 extern "C" JNIEXPORT void JNICALL
 Java_com_oxide_cheat_MainActivity_startCheat(JNIEnv*, jobject) {
-    if (!init_mem()) { LOGE("mem init failed"); return; }
+    if (!init_mem()) return;
     pthread_t t;
     pthread_create(&t, nullptr, cheat_thread, nullptr);
     pthread_detach(t);
-    LOGI("Cheat started");
 }
